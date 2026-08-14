@@ -13,11 +13,11 @@ class TaskScreen extends StatefulWidget {
 
 class _TaskScreenState extends State<TaskScreen> {
   final TaskService _taskService = TaskService();
+  final GlobalKey<ScaffoldMessengerState> _messengerKey =
+      GlobalKey<ScaffoldMessengerState>();
 
   void _showMessage(String message, {bool isError = false}) {
-    if (!mounted) return;
-
-    ScaffoldMessenger.of(context).showSnackBar(
+    _messengerKey.currentState?.showSnackBar(
       SnackBar(
         content: Text(message),
         backgroundColor: isError ? Colors.red : Colors.green,
@@ -38,9 +38,7 @@ class _TaskScreenState extends State<TaskScreen> {
     final bool isEditing = task != null;
     final formKey = GlobalKey<FormState>();
 
-    final titleController = TextEditingController(
-      text: task?.title ?? '',
-    );
+    final titleController = TextEditingController(text: task?.title ?? '');
 
     final descriptionController = TextEditingController(
       text: task?.description ?? '',
@@ -48,7 +46,7 @@ class _TaskScreenState extends State<TaskScreen> {
 
     bool isSaving = false;
 
-    await showDialog<void>(
+    final wasSaved = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) {
@@ -138,14 +136,10 @@ class _TaskScreenState extends State<TaskScreen> {
                             }
 
                             if (!dialogContext.mounted) return;
-                            Navigator.pop(dialogContext);
-
-                            _showMessage(
-                              isEditing
-                                  ? 'Task updated successfully'
-                                  : 'Task added successfully',
-                            );
+                            Navigator.pop(dialogContext, true);
                           } catch (error) {
+                            if (!dialogContext.mounted) return;
+
                             setDialogState(() {
                               isSaving = false;
                             });
@@ -160,9 +154,7 @@ class _TaskScreenState extends State<TaskScreen> {
                       ? const SizedBox(
                           width: 18,
                           height: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                          ),
+                          child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : Text(isEditing ? 'Update' : 'Add'),
                 ),
@@ -173,14 +165,20 @@ class _TaskScreenState extends State<TaskScreen> {
       },
     );
 
+    // showDialog completes while the dismissed route may still be finalizing.
+    // Wait for that frame before disposing controllers used by its text fields.
+    await WidgetsBinding.instance.endOfFrame;
     titleController.dispose();
     descriptionController.dispose();
+
+    if (wasSaved == true && mounted) {
+      _showMessage(
+        isEditing ? 'Task updated successfully' : 'Task added successfully',
+      );
+    }
   }
 
-  Future<void> _changeTaskStatus(
-    TaskModel task,
-    bool? newValue,
-  ) async {
+  Future<void> _changeTaskStatus(TaskModel task, bool? newValue) async {
     if (newValue == null) return;
 
     try {
@@ -189,14 +187,9 @@ class _TaskScreenState extends State<TaskScreen> {
         isCompleted: newValue,
       );
 
-      _showMessage(
-        newValue ? 'Task completed' : 'Task marked as incomplete',
-      );
+      _showMessage(newValue ? 'Task completed' : 'Task marked as incomplete');
     } catch (error) {
-      _showMessage(
-        _getErrorMessage(error),
-        isError: true,
-      );
+      _showMessage(_getErrorMessage(error), isError: true);
     }
   }
 
@@ -206,18 +199,14 @@ class _TaskScreenState extends State<TaskScreen> {
       builder: (dialogContext) {
         return AlertDialog(
           title: const Text('Delete Task'),
-          content: Text(
-            'Are you sure you want to delete "${task.title}"?',
-          ),
+          content: Text('Are you sure you want to delete "${task.title}"?'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext, false),
               child: const Text('Cancel'),
             ),
             FilledButton(
-              style: FilledButton.styleFrom(
-                backgroundColor: Colors.red,
-              ),
+              style: FilledButton.styleFrom(backgroundColor: Colors.red),
               onPressed: () => Navigator.pop(dialogContext, true),
               child: const Text('Delete'),
             ),
@@ -232,19 +221,13 @@ class _TaskScreenState extends State<TaskScreen> {
       await _taskService.deleteTask(task.id);
       _showMessage('Task deleted successfully');
     } catch (error) {
-      _showMessage(
-        _getErrorMessage(error),
-        isError: true,
-      );
+      _showMessage(_getErrorMessage(error), isError: true);
     }
   }
 
   Widget _buildTaskCard(TaskModel task) {
     return Card(
-      margin: const EdgeInsets.symmetric(
-        horizontal: 16,
-        vertical: 7,
-      ),
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
       child: ListTile(
         leading: Checkbox(
           value: task.isCompleted,
@@ -254,8 +237,7 @@ class _TaskScreenState extends State<TaskScreen> {
           task.title,
           style: TextStyle(
             fontWeight: FontWeight.bold,
-            decoration:
-                task.isCompleted ? TextDecoration.lineThrough : null,
+            decoration: task.isCompleted ? TextDecoration.lineThrough : null,
             color: task.isCompleted ? Colors.grey : null,
           ),
         ),
@@ -264,8 +246,7 @@ class _TaskScreenState extends State<TaskScreen> {
           child: Text(
             task.description,
             style: TextStyle(
-              decoration:
-                  task.isCompleted ? TextDecoration.lineThrough : null,
+              decoration: task.isCompleted ? TextDecoration.lineThrough : null,
             ),
           ),
         ),
@@ -281,11 +262,7 @@ class _TaskScreenState extends State<TaskScreen> {
             PopupMenuItem(
               value: 'edit',
               child: Row(
-                children: [
-                  Icon(Icons.edit),
-                  SizedBox(width: 10),
-                  Text('Edit'),
-                ],
+                children: [Icon(Icons.edit), SizedBox(width: 10), Text('Edit')],
               ),
             ),
             PopupMenuItem(
@@ -306,91 +283,85 @@ class _TaskScreenState extends State<TaskScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Firebase Task Manager'),
-        centerTitle: true,
-      ),
-      body: StreamBuilder<List<TaskModel>>(
-        stream: _taskService.getTasks(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(
-              child: CircularProgressIndicator(),
-            );
-          }
+    return ScaffoldMessenger(
+      key: _messengerKey,
+      child: Scaffold(
+        appBar: AppBar(title: const Text('Task Manager'), centerTitle: true),
+        body: StreamBuilder<List<TaskModel>>(
+          stream: _taskService.getTasks(),
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator());
+            }
 
-          if (snapshot.hasError) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
+            if (snapshot.hasError) {
+              return Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.error_outline,
+                        color: Colors.red,
+                        size: 60,
+                      ),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Unable to load tasks',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _getErrorMessage(snapshot.error!),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }
+
+            final tasks = snapshot.data ?? [];
+
+            if (tasks.isEmpty) {
+              return const Center(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(
-                      Icons.error_outline,
-                      color: Colors.red,
-                      size: 60,
-                    ),
-                    const SizedBox(height: 16),
-                    const Text(
-                      'Unable to load tasks',
+                    Icon(Icons.task_alt, size: 80, color: Colors.grey),
+                    SizedBox(height: 16),
+                    Text(
+                      'No tasks available',
                       style: TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      _getErrorMessage(snapshot.error!),
-                      textAlign: TextAlign.center,
-                    ),
+                    SizedBox(height: 8),
+                    Text('Press the + button to add a task.'),
                   ],
                 ),
-              ),
+              );
+            }
+
+            return ListView.builder(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              itemCount: tasks.length,
+              itemBuilder: (context, index) {
+                return _buildTaskCard(tasks[index]);
+              },
             );
-          }
-
-          final tasks = snapshot.data ?? [];
-
-          if (tasks.isEmpty) {
-            return const Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.task_alt,
-                    size: 80,
-                    color: Colors.grey,
-                  ),
-                  SizedBox(height: 16),
-                  Text(
-                    'No tasks available',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  SizedBox(height: 8),
-                  Text('Press the + button to add a task.'),
-                ],
-              ),
-            );
-          }
-
-          return ListView.builder(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            itemCount: tasks.length,
-            itemBuilder: (context, index) {
-              return _buildTaskCard(tasks[index]);
-            },
-          );
-        },
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showTaskDialog(),
-        icon: const Icon(Icons.add),
-        label: const Text('Add Task'),
+          },
+        ),
+        floatingActionButton: FloatingActionButton.extended(
+          onPressed: () => _showTaskDialog(),
+          icon: const Icon(Icons.add),
+          label: const Text('Add Task'),
+        ),
       ),
     );
   }
